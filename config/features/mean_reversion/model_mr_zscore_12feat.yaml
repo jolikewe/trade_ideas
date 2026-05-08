@@ -1,0 +1,45 @@
+name: model_mr_zscore_12feat
+features:
+  - name: zscore_5d
+    type: price_zscore
+    lookback: 5
+  - name: zscore_10d
+    type: price_zscore
+    lookback: 10
+  - name: zscore_20d
+    type: price_zscore
+    lookback: 20
+  - name: zscore_60d
+    type: price_zscore
+    lookback: 60
+  - name: ret_zscore_5d
+    type: return_zscore
+    lookback: 5
+    history: 252
+  - name: ret_zscore_10d
+    type: return_zscore
+    lookback: 10
+    history: 252
+  - name: ret_zscore_20d
+    type: return_zscore
+    lookback: 20
+    history: 252
+  - name: bb_distance_20d
+    type: bollinger
+    lookback: 20
+    n_std: 2.0
+  - name: rsi_14d
+    type: rsi
+    period: 14
+  - name: dev_from_52w_mean
+    type: deviation_from_mean
+    lookback: 252
+  - name: distance_52w_high
+    type: distance_from_high
+    lookback: 252
+  - name: realized_vol_20d
+    type: realized_vol
+    window: 20
+winsorize:
+  lower: 0.01
+  upper: 0.99

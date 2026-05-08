@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod +x *)",
+      "Bash(conda env *)",
+      "Read(//Users/harlan/miniconda3/bin/**)",
+      "Read(//Users/harlan/anaconda3/bin/**)",
+      "Read(//opt/homebrew/bin/**)",
+      "Read(//opt/miniconda3/bin/**)",
+      "Read(//Users/harlan/Documents/anaconda3/bin/**)",
+      "Bash(/Users/harlan/Documents/anaconda3/bin/conda --version)",
+      "Bash(python3.12 --version)",
+      "Bash(python3.11 --version)",
+      "Bash(/opt/homebrew/bin/python3.12 *)",
+      "Bash(.env/bin/pip install *)",
+      "Bash(.env/bin/pytest *)",
+      "Bash(.env/bin/trading-system *)",
+      "Bash(.env/bin/python *)",
+      "Bash(git init *)",
+      "Bash(git remote *)",
+      "Bash(git add *)"
+    ]
+  }
+}

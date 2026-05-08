@@ -1,0 +1,8 @@
+commission:
+  model: interactive_brokers
+  per_share: 0.005
+  min_per_order: 1.0
+  max_pct_of_trade: 0.01
+slippage:
+  model: fixed_bps
+  bps: 5

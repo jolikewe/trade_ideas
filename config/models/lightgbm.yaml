@@ -1,0 +1,16 @@
+hyperparameters:
+  max_depth: [4, 5]
+  num_leaves: [15, 31, 63]
+  learning_rate: [0.01]
+  min_child_samples: [50]
+
+fixed_params:
+  num_iterations: 300
+  reg_lambda: 1.0
+  subsample: 0.8
+  subsample_freq: 1
+  colsample_bytree: 0.8
+  random_state: 42
+
+early_stopping:
+  enabled: false

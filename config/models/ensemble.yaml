@@ -1,0 +1,3 @@
+method: ic_weighted
+min_ic_threshold: 0.02
+exclude_negative_ic: true

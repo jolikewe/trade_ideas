@@ -1,0 +1,5 @@
+filters:
+  min_price: 5.0
+  min_avg_volume: 100000
+  exclude_adrs: true
+rebalance_frequency: 252
