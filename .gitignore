@@ -1,0 +1,12 @@
+.env/
+data/
+logs/
+*.pyc
+__pycache__/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.DS_Store
+config/data_sources.yaml
+*.log

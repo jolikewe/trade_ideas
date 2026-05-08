@@ -1,0 +1,8 @@
+max_positions: 6
+max_weight: 0.25
+min_weight: 0.0
+factor_neutral:
+  enabled: true
+  mktrf_threshold: 0.15
+  factor_threshold: 0.10
+solver: ECOS

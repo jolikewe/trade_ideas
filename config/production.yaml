@@ -1,0 +1,18 @@
+account:
+  initial_capital: 2000.0
+  max_positions: 6
+model:
+  window: 12
+  feature_set: model_mr_zscore_12feat
+rebalance:
+  frequency_days: 5
+data:
+  lookback_days: 400
+regime:
+  vix_threshold: 25.0
+  momentum_z_threshold: 0.5
+paths:
+  positions_file: data/production/positions.csv
+  equity_log: data/production/equity_log.csv
+  daily_brief: data/production/daily_brief.md
+  rebalance_state: data/production/rebalance_state.json

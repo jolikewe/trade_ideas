@@ -1,0 +1,8 @@
+walk_forward:
+  data_start_date: "2010-01-01"
+  data_end_date: "2025-12-31"
+  train_years: 4
+  val_years: 1
+  test_years: 1
+  purge_days: 5
+  embargo_pct: 0.10
