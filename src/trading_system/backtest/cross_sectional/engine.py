@@ -19,17 +19,24 @@ class BacktestEngine:
         self.execution = IBCommissionSimulator()
 
     def run(self, prices: pd.DataFrame, signals: pd.DataFrame,
-            start: str, end: str, use_regime: bool = True) -> dict:
+            start: str, end: str, use_regime: bool = True,
+            vix_series: pd.Series | None = None) -> dict:
         dates = pd.bdate_range(start, end)
         prices_pivot = prices.pivot(index="date", columns="ticker", values="close")
         returns_pivot = prices_pivot.pct_change()
 
         spy_series = prices_pivot.mean(axis=1)
-        vix_series = prices[["date", "vix_close"]].drop_duplicates("date").set_index("date")["vix_close"]
-        vix_series = vix_series.reindex(spy_series.index).ffill()
 
         if use_regime:
-            regime = self.regime_detector.detect_composite_regime(vix_series, spy_series)
+            if vix_series is None and "vix_close" in prices.columns:
+                vix_series = (prices[["date", "vix_close"]]
+                              .drop_duplicates("date")
+                              .set_index("date")["vix_close"])
+            if vix_series is not None:
+                vix_series = vix_series.reindex(spy_series.index).ffill()
+                regime = self.regime_detector.detect_composite_regime(vix_series, spy_series)
+            else:
+                regime = pd.DataFrame({"tradeable": 1}, index=spy_series.index)
         else:
             regime = pd.DataFrame({"tradeable": 1}, index=spy_series.index)
 
