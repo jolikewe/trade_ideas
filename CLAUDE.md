@@ -12,10 +12,10 @@ Before writing any code or making any changes:
 No exceptions — even for small changes. A one-line fix still gets a one-sentence plan and a confirmation.
 
 ### No Guessing or Fabricating
-- If you don't know something, say so directly. Do not fill gaps with plausible-sounding details.
+- If you don't know something, say so directly.
 - Never invent config values, file paths, function signatures, or results you haven't verified by reading the actual file.
-- If a file doesn't exist yet, say it doesn't exist. Don't describe it as if it does.
-- If asked about backtest results, training metrics, or any numbers — only report what is in actual files on disk. Do not estimate or extrapolate.
+- If a file doesn't exist yet, say it doesn't exist.
+- If asked about backtest results, training metrics, or any numbers — only report what is in actual files on disk.
 - If you're unsure whether a module, flag, or behavior exists, grep for it or read the file before answering.
 
 ### Clarify Ambiguity Before Acting
@@ -24,19 +24,90 @@ If the request is unclear, incomplete, or could be interpreted multiple ways:
 - List the specific ambiguities — don't ask open-ended questions
 - Propose your default interpretation and confirm it before using it
 
+### Git & Commits
+- Never `git add`, `git commit`, or `git push` without an explicit request.
+- Never include `Co-Authored-By` lines in commit messages.
+
+### Formatting Conventions
+- Write a full calendar year as e.g. `2015`, not `2015-2016`. A test window labelled "2015" means 2015-01-01 → 2016-01-01.
+
+### Memory System
+- Do not save project-specific information to the Claude memory system. Put it here in CLAUDE.md instead so it travels with the repo and is always loaded.
+
 ---
 
 ## Project Context
 
-**Strategy:** Mean reversion on U.S. equities. ML ensemble (Ridge + LightGBM) predicts 5-day forward returns. Factor-neutral portfolio via cvxpy. Regime gate (VIX + SPY 200-day MA + momentum z-score) blocks trading in bad markets.
+**Strategy:** Mean reversion on U.S. equities. ML ensemble (Ridge + LightGBM) predicts 5-day forward returns. Factor-neutral portfolio via cvxpy. Regime gate (VIX + SPY 200-day MA + momentum z-score) blocks trading in bad markets. All three gates use AND logic — all must pass.
 
-**Active model:** `model_mr_zscore_12feat` — 12 features, see `config/features/mean_reversion/model_mr_zscore_12feat.yaml`
+**Universe:** S&P 500 current constituents (~501 tickers) via `PointInTimeUniverse`. BRK.B and BF.B always fail to download — expected, ignore those warnings.
 
-**Key constraint:** Point-in-time correctness everywhere. No lookahead bias. Use `filing_date` not `period_end_date` for fundamentals. All features use `shift(1)`.
+**Active model:** `model_mr_zscore_12feat` — 12 features defined in `src/trading_system/features/mean_reversion.py::FEATURE_COLS`.
+
+**Walk-forward:** 11 windows, 4yr train / 1yr val / 1yr test, 5-day purge, 10% embargo. Window dates driven by `config/backtest.yaml`.
+
+**Key constraint:** Point-in-time correctness everywhere. No lookahead bias. All features use `shift(1)`.
 
 **Environment:** Python 3.12 venv at `.env/`. Activate with `source .env/bin/activate`. Run tests with `.env/bin/pytest tests/ -v`.
 
-**Data:** Not in git. Must be downloaded via `scripts/download_yfinance_data.py`. Do not assume data files exist unless you verify with `ls` or `find`.
+**Data:** Not in git. Price cache is in `data/raw/yfinance/` (per-ticker parquet) and `data/cache/` (merged parquet keyed by date range). Run the download command below to populate or refresh.
+
+---
+
+## CLI Reference
+
+All commands run from repo root with the venv active:
+
+```bash
+# Download / refresh price data
+python -m trading_system.cli download --start 2010-01-01 --end <YYYY-MM-DD> --force
+
+# Walk-forward training (all 11 windows)
+python -m trading_system.cli train --verbose
+
+# Backtest a single window (1–11)
+python -m trading_system.cli backtest --window 3
+
+# Train production model on full history (no val set, equal ridge/lgb weighting)
+python -m trading_system.cli production-train
+
+# Daily brief (generates + saves to data/production/daily_brief.md)
+python production/daily_run.py --refresh
+
+# Confirm a rebalance was executed
+python production/daily_run.py --confirm-trade
+```
+
+**Daily workflow:**
+1. `download --end <today> --force` — refresh prices
+2. `python production/daily_run.py --refresh` — generate brief
+3. Review `data/production/daily_brief.md` and act
+
+---
+
+## Model Artefacts
+
+| Path | Contents |
+|------|----------|
+| `data/models/mean_reversion/model_mr_zscore_12feat_ridge/window_N/model.pkl` | Ridge model (pickle) |
+| `data/models/mean_reversion/model_mr_zscore_12feat_lightgbm/window_N/model.lgb` | LightGBM booster |
+| `data/models/mean_reversion/model_mr_zscore_12feat_lightgbm/window_N/model_meta.json` | LightGBM metadata (train_ic, feature_names) |
+| `data/models/mean_reversion/*/window_N/metadata.json` | Trainer metadata (train/val dates, val_ic) |
+| `data/models/mean_reversion/*/production/` | Same layout, no val_ic (trained on all data) |
+| `data/results/backtests/window_N_<timestamp>.json` | Backtest results per window |
+
+---
+
+## Production Pipeline
+
+| File | Purpose |
+|------|---------|
+| `production/daily_run.py` | Daily brief generator — signals, regime, portfolio |
+| `production/portfolio_state.py` | Position tracking and P&L |
+| `data/production/daily_brief.md` | Latest brief (overwritten daily) |
+| `data/production/brief_log.csv` | Historical log — one row per day |
+| `data/production/positions.csv` | Current holdings (edit after executing trades) |
+| `data/production/rebalance_state.json` | Last rebalance date and frequency |
 
 ---
 
@@ -53,11 +124,12 @@ If the request is unclear, incomplete, or could be interpreted multiple ways:
 
 ### Keep Documentation in Sync
 After any change that affects behaviour, interfaces, config, or file formats:
-- Update **README.md** if the change affects CLI usage, results, or the repository structure section
-- Update **SETUP.md** if the change affects installation, config values, data schemas, or infrastructure
+- Update **README.md** if the change affects CLI usage, results, or repository structure
+- Update **SETUP.md** if the change affects installation, config values, or data schemas
+- Update **CLAUDE.md** if the change affects project context, workflow, or artefact paths
 - Update **`.session_context.md`** (when asked) with what was changed and what's next
 
-Minor internal bug fixes (no interface change) do not require doc updates. When in doubt, flag it: "Does this need a doc update?"
+Minor internal bug fixes (no interface change) do not require doc updates. When in doubt, flag it.
 
 ### Never do without asking first
 - Delete files or directories
@@ -80,9 +152,8 @@ Minor internal bug fixes (no interface change) do not require doc updates. When 
 - **Notes** — any important context, decisions, or constraints that don't fit elsewhere
 
 **Rules:**
-- Only update it when explicitly asked ("update session context", "log that", "mark that done", etc.)
-- Never fabricate entries — only log things that actually happened in the session
-- Keep Completed entries short and factual
+- Only update when explicitly asked
+- Never fabricate entries — only log things that actually happened
 - Do not reset or clear old Completed entries — accumulate them
 
 ---
