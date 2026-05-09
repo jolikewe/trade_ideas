@@ -57,9 +57,43 @@ class ModelTrainer:
 
         return results
 
-    def _save_metadata(self, out_dir: Path, train_ic: float, val_ic: float,
-                       features: list[str], train_start: str, train_end: str,
-                       val_start: str, val_end: str) -> None:
+    def train_production(self, features: pd.DataFrame, labels: pd.DataFrame,
+                         train_start: str, train_end: str,
+                         model_name: str = "model_mr_zscore_12feat") -> dict:
+        features = features.sort_values(["date", "ticker"])
+        labels = labels.sort_values(["date", "ticker"])
+        data = features.merge(labels, on=["ticker", "date"], how="inner")
+        train = data[(data["date"] >= train_start) & (data["date"] <= train_end)]
+
+        feature_cols = [c for c in FEATURE_COLS if c in data.columns]
+        X_train = train[feature_cols].fillna(0)
+        y_train = train["label"]
+
+        results = {}
+
+        ridge = RidgeModel()
+        ridge.fit(X_train, y_train)
+        out_dir = self.model_dir / f"{model_name}_ridge" / "production"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ridge.save(str(out_dir / "model.pkl"))
+        self._save_metadata(out_dir, ridge.train_ic, None, feature_cols,
+                            train_start, train_end, None, None)
+        results["ridge"] = {"train_ic": ridge.train_ic}
+
+        lgb_model = LightGBMModel()
+        lgb_model.fit(X_train, y_train)
+        out_dir_lgb = self.model_dir / f"{model_name}_lightgbm" / "production"
+        out_dir_lgb.mkdir(parents=True, exist_ok=True)
+        lgb_model.save(str(out_dir_lgb / "model.json"))
+        self._save_metadata(out_dir_lgb, lgb_model.train_ic, None, feature_cols,
+                            train_start, train_end, None, None)
+        results["lightgbm"] = {"train_ic": lgb_model.train_ic}
+
+        return results
+
+    def _save_metadata(self, out_dir: Path, train_ic: float, val_ic: float | None,
+                       features: list[str], train_start: str | None, train_end: str | None,
+                       val_start: str | None, val_end: str | None) -> None:
         meta = {"train_ic": train_ic, "val_ic": val_ic, "feature_list": features,
                 "train_start": train_start, "train_end": train_end,
                 "val_start": val_start, "val_end": val_end}

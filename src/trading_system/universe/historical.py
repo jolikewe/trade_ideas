@@ -18,11 +18,15 @@ class PointInTimeUniverse:
 
     @classmethod
     def _build_from_wikipedia(cls, save_path: str) -> "PointInTimeUniverse":
-        import pandas as pd
-        tables = pd.read_html(
+        import io
+        import requests
+        resp = requests.get(
             "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-            match="Symbol", flavor="lxml"
+            headers={"User-Agent": "Mozilla/5.0 (compatible; trading-system-bot/1.0)"},
+            timeout=30,
         )
+        resp.raise_for_status()
+        tables = pd.read_html(io.StringIO(resp.text), match="Symbol", flavor="lxml")
         current = tables[0][["Symbol", "Date added"]].rename(
             columns={"Symbol": "ticker", "Date added": "added_date"}
         )

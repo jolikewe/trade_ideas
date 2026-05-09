@@ -4,6 +4,17 @@ set -euo pipefail
 BRIEF=data/production/daily_brief.md
 TODAY=$(date +%Y-%m-%d)
 
+# --- CLAUDE.md ---
+echo "=== CLAUDE.md ==="
+cat CLAUDE.md
+
+# --- README ---
+echo ""
+echo "=== README ==="
+cat README.md
+
+# --- Daily Brief ---
+echo ""
 if [ -f "$BRIEF" ] && grep -q "date: $TODAY" "$BRIEF" 2>/dev/null; then
     echo "=== Daily Brief (cached) ==="
     cat "$BRIEF"
@@ -13,9 +24,15 @@ else
     [ -f "$BRIEF" ] && cat "$BRIEF" || true
 fi
 
+# --- Session Context ---
 echo ""
-echo "=== README ==="
-cat README.md
+if [ -f ".session_context.md" ]; then
+    echo "=== Session Context ==="
+    cat .session_context.md
+else
+    echo "=== Session Context ==="
+    echo "(none — .session_context.md does not exist yet)"
+fi
 
 echo ""
-echo "Confirm: README.md and daily brief loaded."
+echo "Session loaded: CLAUDE.md | README | daily brief | session context"

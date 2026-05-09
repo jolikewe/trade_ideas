@@ -14,14 +14,14 @@ class RidgeModel:
         self.feature_names: list[str] = []
 
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series,
-            X_val: pd.DataFrame, y_val: pd.Series) -> None:
+            X_val: pd.DataFrame | None = None, y_val: pd.Series | None = None) -> None:
         self.feature_names = list(X_train.columns)
         X_tr = self.scaler.fit_transform(X_train.values)
         self.model = RidgeCV(alphas=self.alpha_grid, cv=5)
         self.model.fit(X_tr, y_train.values)
         self.train_ic = self._ic(self.model.predict(X_tr), y_train.values)
-        X_v = self.scaler.transform(X_val.values)
-        self.val_ic = self._ic(self.model.predict(X_v), y_val.values)
+        if X_val is not None and y_val is not None:
+            self.val_ic = self._ic(self.model.predict(self.scaler.transform(X_val.values)), y_val.values)
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         return self.model.predict(self.scaler.transform(X.values))

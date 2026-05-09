@@ -983,8 +983,10 @@ Named by params: `{type}_end=YYYY-MM-DD_start=YYYY-MM-DD.parquet`
 
 | File | Description |
 |------|-------------|
-| `model.pkl` / `model.json` | Trained model |
-| `metadata.json` | train_ic, val_ic, feature_list, train/val dates, hyperparams |
+| `model.pkl` | Ridge trained model (pickle) |
+| `model.lgb` | LightGBM trained model (native LGB format) |
+| `metadata.json` | Ridge: train_ic, val_ic, feature_list, train/val dates, hyperparams |
+| `model_meta.json` | LightGBM: train_ic, val_ic, feature_list, hyperparams |
 
 ### PIT Constituent DB (`data/raw/sp500_pit_constituents.csv`)
 

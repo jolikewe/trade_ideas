@@ -10,3 +10,4 @@ build/
 .DS_Store
 config/data_sources.yaml
 *.log
+.session_context.md

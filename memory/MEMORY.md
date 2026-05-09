@@ -1,0 +1,2 @@
+- [No unsolicited git commits](feedback_git_commits.md) — never git add/commit/push without explicit user request
+- [No Co-Authored-By in commits](feedback_git_commit_message.md) — omit Claude trailer from all commit messages
