@@ -1,11 +1,24 @@
 #!/usr/bin/env python3
-"""Daily brief generator. Auto-runs at Claude session start via .claude/session-start.sh."""
+"""Daily brief generator. Run daily; auto-runs at Claude session start."""
 import argparse
+import csv
 import json
+import math
 from datetime import date, datetime
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent))
+
+LOG_PATH = Path("data/production/brief_log.csv")
+LOG_COLS = [
+    "date", "signal_date", "days_stale",
+    "vix", "spy", "spy_ma200", "momentum_z",
+    "vix_ok", "spy_ok", "momentum_ok", "regime_open", "regime_consec_days",
+    "n_stocks", "n_buy_zone", "top_tickers",
+    "ridge_train_ic", "lgb_train_ic",
+]
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -40,165 +53,199 @@ def main():
 
 def _generate_brief(today: str, state_path: Path) -> str:
     import pandas as pd
-    import yfinance as yf
     from trading_system.data.loaders import DataLoader
     from trading_system.universe.historical import PointInTimeUniverse
-    from trading_system.features.mean_reversion import MeanReversionFeatures, FEATURE_COLS
+    from trading_system.features.mean_reversion import MeanReversionFeatures
     from trading_system.models.ridge import RidgeModel
     from trading_system.models.lightgbm_model import LightGBMModel
     from trading_system.backtest.cross_sectional.signal_generator import ICWeightedSignalGenerator
     from trading_system.regime.detector import RegimeDetector
     from trading_system.portfolio.optimizer import FactorNeutralOptimizer
     from trading_system.utils.config import load_config
+    from portfolio_state import PortfolioState
 
     cfg = load_config("config/backtest.yaml")["walk_forward"]
 
-    # Load production models
+    # ── Models ────────────────────────────────────────────────────────────────
     model_dir = Path("data/models/mean_reversion")
     model_name = "model_mr_zscore_12feat"
     ridge_path = model_dir / f"{model_name}_ridge" / "production" / "model.pkl"
-    lgb_path = model_dir / f"{model_name}_lightgbm" / "production" / "model.json"
+    lgb_path   = model_dir / f"{model_name}_lightgbm" / "production" / "model.json"
 
     if not ridge_path.exists() or not lgb_path.with_suffix(".lgb").exists():
-        return _stub_brief(today, state_path, "Production models not found. Run: python -m trading_system.cli production-train")
+        return _stub_brief(today, state_path,
+                           "Production models not found. Run: python -m trading_system.cli production-train")
 
-    ridge = RidgeModel.load(str(ridge_path))
+    ridge     = RidgeModel.load(str(ridge_path))
     lgb_model = LightGBMModel.load(str(lgb_path))
+    ridge_train_ic = json.loads((ridge_path.parent / "metadata.json").read_text())["train_ic"]
+    lgb_train_ic   = json.loads((lgb_path.parent / "metadata.json").read_text())["train_ic"]
 
-    # Load prices from cache — use today so we pick up any freshly downloaded data
-    pit = PointInTimeUniverse.load_or_build()
+    # ── Prices ────────────────────────────────────────────────────────────────
+    pit    = PointInTimeUniverse.load_or_build()
     loader = DataLoader()
     prices = loader.load_prices(pit.all_tickers, cfg["data_start_date"], today)
     if prices.empty:
         return _stub_brief(today, state_path, "No price data in cache.")
 
-    # Compute features
-    feats = MeanReversionFeatures().compute_all(prices)
-    latest_date = feats["date"].max()
-    latest_feats = feats[feats["date"] == latest_date].copy()
+    latest_date = prices["date"].max()
+    days_stale  = (pd.Timestamp(today) - latest_date).days
 
-    # Generate signals
-    sig_gen = ICWeightedSignalGenerator()
-    ridge_meta_path = ridge_path.parent / "metadata.json"
-    lgb_meta_path = lgb_path.parent / "metadata.json"
-    ridge_val_ic = json.loads(ridge_meta_path.read_text()).get("val_ic") or 0.0
-    lgb_val_ic = json.loads(lgb_meta_path.read_text()).get("val_ic") or 0.0
+    # ── Features & signals ────────────────────────────────────────────────────
+    feats         = MeanReversionFeatures().compute_all(prices)
+    latest_feats  = feats[feats["date"] == latest_date].copy()
+    n_stocks      = len(latest_feats)
 
     X_r = latest_feats.set_index("ticker")[ridge.feature_names].fillna(0)
     X_l = latest_feats.set_index("ticker")[lgb_model.feature_names].fillna(0)
     ridge_scores = pd.Series(ridge.predict(X_r), index=X_r.index)
-    lgb_scores = pd.Series(lgb_model.predict(X_l), index=X_l.index)
+    lgb_scores   = pd.Series(lgb_model.predict(X_l), index=X_l.index)
+    ensemble     = (ridge_scores.rank(pct=True) + lgb_scores.rank(pct=True)) / 2
+    ensemble     = ensemble.rank(pct=True)
+    n_buy_zone   = int((ensemble >= 0.75).sum())
 
-    # For production models there's no val_ic — use equal weighting
-    if ridge_val_ic == 0.0 and lgb_val_ic == 0.0:
-        ensemble = (ridge_scores.rank(pct=True) + lgb_scores.rank(pct=True)) / 2
-    else:
-        val_ics = {"ridge": ridge_val_ic, "lightgbm": lgb_val_ic}
-        ensemble = sig_gen.generate({"ridge": ridge_scores, "lightgbm": lgb_scores}, val_ics)
-
-    ensemble = ensemble.rank(pct=True)
-
-    # Fetch VIX and SPY for regime gate — need 200+ trading days before latest_date
+    # ── Regime ────────────────────────────────────────────────────────────────
     regime_start = str((latest_date - pd.DateOffset(days=450)).date())
     vix_series, spy_series = _fetch_regime_data(regime_start, today)
 
-    # Regime detection — cap VIX/SPY to latest price date so momentum z aligns
-    regime_known = vix_series is not None and spy_series is not None and len(vix_series) > 10
+    regime_known = (vix_series is not None and spy_series is not None
+                    and len(vix_series) > 10)
     if regime_known:
         vix_series = vix_series[vix_series.index <= latest_date]
         spy_series = spy_series[spy_series.index <= latest_date]
-        detector = RegimeDetector()
-        regime = detector.detect_composite_regime(vix_series, spy_series, prices=prices)
-        latest_regime_date = regime.index[regime.index.notna()].max()
-        regime_row = regime.loc[latest_regime_date]
-        tradeable = bool(regime_row["tradeable"])
-        vix_val = float(vix_series.iloc[-1])
-        spy_val = float(spy_series.iloc[-1])
-        spy_ma200 = float(spy_series.rolling(200).mean().iloc[-1])
-        mom_z = float(regime_row.get("momentum_z", float("nan")))
+        detector   = RegimeDetector()
+        regime_df  = detector.detect_composite_regime(vix_series, spy_series, prices=prices)
+        latest_rd  = regime_df.index[regime_df.index.notna()].max()
+        regime_row = regime_df.loc[latest_rd]
+        tradeable  = bool(regime_row["tradeable"])
+        vix_val    = float(vix_series.iloc[-1])
+        spy_val    = float(spy_series.iloc[-1])
+        spy_ma200  = float(spy_series.rolling(200).mean().iloc[-1])
+        mom_z      = float(regime_row.get("momentum_z", float("nan")))
+        vix_ok     = bool(regime_row["vix_ok"])
+        spy_ok     = bool(regime_row["spy_ok"])
+        mom_ok     = bool(regime_row["momentum_ok"])
     else:
         tradeable = False
         vix_val = spy_val = spy_ma200 = mom_z = float("nan")
+        vix_ok = spy_ok = mom_ok = False
 
-    # Portfolio weights (only if regime open)
-    weights = pd.Series(dtype=float)
+    regime_consec = _regime_consecutive_days(today, tradeable)
+
+    # ── Portfolio optimisation ─────────────────────────────────────────────────
+    weights    = pd.Series(dtype=float)
     opt_status = ""
     if tradeable:
-        optimizer = FactorNeutralOptimizer(target_n=6)
-        result = optimizer.optimize(ensemble)
-        weights = result["weights"]
+        result     = FactorNeutralOptimizer(target_n=6).optimize(ensemble)
+        weights    = result["weights"]
         opt_status = result["status"]
 
-    # Portfolio state
-    portfolio_state = {}
-    if state_path.exists():
-        portfolio_state = json.loads(state_path.read_text())
-    last_rebal = portfolio_state.get("last_rebalance_date") or "never"
-    sys.path.insert(0, str(Path(__file__).parent))
-    from portfolio_state import PortfolioState
-    ps = PortfolioState()
-    is_rebal_day = ps.is_rebalance_day()
+    # ── Positions P&L ─────────────────────────────────────────────────────────
+    ps        = PortfolioState()
     positions = ps.load_positions()
+    pnl_section = ""
+    total_unrealised = 0.0
+    if not positions.empty:
+        latest_prices = (prices[prices["date"] == latest_date]
+                         .set_index("ticker")["close"])
+        rows = []
+        for _, r in positions.iterrows():
+            tkr   = r["ticker"]
+            ep    = r.get("entry_price", float("nan"))
+            shrs  = r.get("shares", 0)
+            cp    = float(latest_prices.get(tkr, float("nan")))
+            if not math.isnan(cp) and not math.isnan(ep):
+                upnl = (cp - ep) * shrs
+                pct  = (cp / ep - 1) * 100
+                total_unrealised += upnl
+                rows.append(f"| {tkr:<8} | {int(shrs):>6} | {ep:>8.2f} | {cp:>8.2f} | {upnl:>+9.2f} | {pct:>+6.1f}% |")
+            else:
+                rows.append(f"| {tkr:<8} | {int(shrs):>6} | {ep:>8.2f} | {'n/a':>8} | {'n/a':>9} | {'n/a':>7} |")
+        pos_md = "\n".join(rows)
+        pnl_section = f"""## Current Positions  (unrealised P&L: {total_unrealised:+.2f})
+| Ticker   | Shares | Entry    | Now      | P&L ($)   | P&L (%) |
+|----------|--------|----------|----------|-----------|---------|
+{pos_md}
+"""
 
-    # Format brief
-    gate_icon = lambda ok: "✅" if ok else "❌"
+    # ── Portfolio state ────────────────────────────────────────────────────────
+    portfolio_state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    last_rebal      = portfolio_state.get("last_rebalance_date") or "never"
+    is_rebal_day    = ps.is_rebalance_day()
+
+    # ── Append to log ──────────────────────────────────────────────────────────
+    top5 = "|".join(ensemble.nlargest(5).index.tolist())
+    _append_log({
+        "date": today, "signal_date": str(latest_date.date()),
+        "days_stale": days_stale,
+        "vix": round(vix_val, 2), "spy": round(spy_val, 2),
+        "spy_ma200": round(spy_ma200, 2), "momentum_z": round(mom_z, 4),
+        "vix_ok": int(vix_ok), "spy_ok": int(spy_ok),
+        "momentum_ok": int(mom_ok), "regime_open": int(tradeable),
+        "regime_consec_days": regime_consec,
+        "n_stocks": n_stocks, "n_buy_zone": n_buy_zone,
+        "top_tickers": top5,
+        "ridge_train_ic": round(ridge_train_ic, 4),
+        "lgb_train_ic": round(lgb_train_ic, 4),
+    })
+
+    # ── Format ─────────────────────────────────────────────────────────────────
+    icon = lambda ok: "✅" if ok else "❌"
+
+    stale_warn = ""
+    if days_stale > 1:
+        stale_warn = f"\n> ⚠️ **Data is {days_stale} days stale** (latest: {latest_date.date()}). Run `download --end {today} --force` to refresh.\n"
+
     if regime_known:
-        regime_lines = [
-            f"| VIX            | {vix_val:.1f}   | <25      | {gate_icon(regime_row['vix_ok'])} |",
-            f"| SPY vs MA200   | {spy_val:.2f} / {spy_ma200:.2f} | SPY>MA200 | {gate_icon(regime_row['spy_ok'])} |",
-            f"| Momentum Z     | {mom_z:.2f}   | <0.5     | {gate_icon(regime_row['momentum_ok'])} |",
-        ]
-        regime_status = "OPEN 🟢" if tradeable else "CLOSED 🔴"
+        regime_lines = "\n".join([
+            f"| VIX          | {vix_val:.1f}       | < 25      | {icon(vix_ok)} |",
+            f"| SPY vs MA200 | {spy_val:.2f} / {spy_ma200:.2f} | SPY > MA  | {icon(spy_ok)} |",
+            f"| Momentum Z   | {mom_z:.2f}      | < 0.5     | {icon(mom_ok)} |",
+        ])
+        consec_label = f"{'open' if tradeable else 'closed'} {regime_consec} day{'s' if regime_consec != 1 else ''}"
+        regime_status = f"{'OPEN 🟢' if tradeable else 'CLOSED 🔴'}  _(regime {consec_label})_"
     else:
-        regime_lines = ["| _(network unavailable — fetch VIX/SPY manually)_ |  |  |  |"]
+        regime_lines = "| _(network unavailable — fetch VIX/SPY manually)_ | | | |"
         regime_status = "UNKNOWN ⚠️"
 
     if tradeable:
-        action = "TRADE — regime open, rebalance today" if is_rebal_day else f"HOLD — next rebalance due in ~{_days_until_rebal(portfolio_state)} business days"
+        action = ("TRADE — regime open, rebalance today" if is_rebal_day
+                  else f"HOLD — next rebalance in ~{_days_until_rebal(portfolio_state)} business days")
         weights_md = "\n".join(
-            f"| {t:<8} | {w:.1%} |" for t, w in weights.sort_values(ascending=False).items()
+            f"| {t:<8} | {w:.1%} |"
+            for t, w in weights.sort_values(ascending=False).items()
         )
         portfolio_section = f"""## Target Portfolio
 | Ticker   | Weight |
 |----------|--------|
 {weights_md}
 
-Optimizer status: {opt_status}"""
+_Optimizer: {opt_status}_"""
     else:
         action = "FLAT — regime gate closed, no new trades"
         portfolio_section = "## Target Portfolio\n_Regime gate closed — no positions._"
 
-    top10 = ensemble.nlargest(10)
+    top10    = ensemble.nlargest(10)
     top10_md = "\n".join(f"| {t:<8} | {s:.3f} |" for t, s in top10.items())
-
-    signals_section = f"""## Top 10 Signals (as of {latest_date.date()})
+    signals_section = f"""## Top 10 Signals
 | Ticker   | Score  |
 |----------|--------|
-{top10_md}"""
+{top10_md}
 
-    positions_section = ""
-    if not positions.empty:
-        pos_md = "\n".join(
-            f"| {r['ticker']:<8} | {r['shares']:>6} | {r.get('entry_price', 'n/a')} |"
-            for _, r in positions.iterrows()
-        )
-        positions_section = f"""## Current Positions
-| Ticker   | Shares | Entry |
-|----------|--------|-------|
-{pos_md}
-"""
+_Signal stats: {n_stocks} stocks scored · {n_buy_zone} in buy zone (top quartile) · model train IC: ridge {ridge_train_ic:.4f} / lgb {lgb_train_ic:.4f}_"""
 
-    brief = f"""---
+    return f"""---
 date: {today}
 generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}
+signal_date: {latest_date.date()}
 ---
 
 # Daily Brief — {today}
-
+{stale_warn}
 ## Regime Gate
-| Gate           | Value  | Threshold | Status |
-|----------------|--------|-----------|--------|
-{chr(10).join(regime_lines)}
+| Gate         | Value       | Threshold | Status |
+|--------------|-------------|-----------|--------|
+{regime_lines}
 
 **Overall: {regime_status}**
 
@@ -211,10 +258,9 @@ Last rebalance: {last_rebal}
 
 {signals_section}
 
-{positions_section}---
-_Models: {model_name} (production). Signal date: {latest_date.date()}._
+{pnl_section}---
+_Models: {model_name} (production) · Data through {latest_date.date()}_
 """
-    return brief
 
 
 def _fetch_regime_data(start: str, end: str):
@@ -234,7 +280,7 @@ def _fetch_regime_data(start: str, end: str):
     try:
         vix_raw = _flatten(yf.download("^VIX", start=start, end=end,
                                         auto_adjust=True, progress=False))
-        spy_raw = _flatten(yf.download("SPY", start=start, end=end,
+        spy_raw = _flatten(yf.download("SPY",  start=start, end=end,
                                         auto_adjust=True, progress=False))
         if vix_raw.empty or spy_raw.empty or "close" not in vix_raw or "close" not in spy_raw:
             return None, None
@@ -245,6 +291,39 @@ def _fetch_regime_data(start: str, end: str):
         return vix, spy
     except Exception:
         return None, None
+
+
+def _regime_consecutive_days(today: str, regime_open: bool) -> int:
+    """Count consecutive days in the log where regime_open matches today's value."""
+    if not LOG_PATH.exists():
+        return 1
+    with open(LOG_PATH) as f:
+        rows = list(csv.DictReader(f))
+    count = 1
+    for row in reversed(rows):
+        if row.get("date") == today:
+            continue
+        if int(row.get("regime_open", -1)) == int(regime_open):
+            count += 1
+        else:
+            break
+    return count
+
+
+def _append_log(row: dict) -> None:
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not LOG_PATH.exists()
+    # Overwrite today's row if it already exists
+    existing = []
+    if LOG_PATH.exists():
+        with open(LOG_PATH) as f:
+            existing = list(csv.DictReader(f))
+        existing = [r for r in existing if r.get("date") != row["date"]]
+    with open(LOG_PATH, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=LOG_COLS)
+        writer.writeheader()
+        writer.writerows(existing)
+        writer.writerow({k: row.get(k, "") for k in LOG_COLS})
 
 
 def _stub_brief(today: str, state_path: Path, reason: str) -> str:
@@ -261,13 +340,12 @@ generated: {datetime.now().isoformat()}
 ## Status
 {reason}
 
-Last rebalance: {state.get("last_rebalance_date", "never")}
+Last rebalance: {state.get("last_rebalance_date") or "never"}
 """
 
 
 def _days_until_rebal(state: dict) -> int:
     import pandas as pd
-    from datetime import date
     last = state.get("last_rebalance_date")
     freq = state.get("frequency_days", 5)
     if last is None:
