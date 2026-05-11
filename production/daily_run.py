@@ -81,10 +81,14 @@ def _generate_brief(today: str, state_path: Path) -> str:
     ridge_train_ic = json.loads((ridge_path.parent / "metadata.json").read_text())["train_ic"]
     lgb_train_ic   = json.loads((lgb_path.parent / "metadata.json").read_text())["train_ic"]
 
-    # ── Prices ────────────────────────────────────────────────────────────────
+    # ── Prices (incremental download built-in) ────────────────────────────────
     pit    = PointInTimeUniverse.load_or_build()
     loader = DataLoader()
-    prices = loader.load_prices(pit.all_tickers, cfg["data_start_date"], today)
+    print("Updating prices...", end=" ", flush=True)
+    prices = loader.yf.load_universe(pit.all_tickers, cfg["data_start_date"], today,
+                                     show_progress=False)
+    prices["date"] = pd.to_datetime(prices["date"])
+    print(f"done ({prices['ticker'].nunique()} tickers through {prices['date'].max().date()})")
     if prices.empty:
         return _stub_brief(today, state_path, "No price data in cache.")
 
@@ -194,7 +198,7 @@ def _generate_brief(today: str, state_path: Path) -> str:
 
     stale_warn = ""
     if days_stale > 1:
-        stale_warn = f"\n> ⚠️ **Data is {days_stale} days stale** (latest: {latest_date.date()}). Run `download --end {today} --force` to refresh.\n"
+        stale_warn = f"\n> ⚠️ **Data is {days_stale} days stale** (latest: {latest_date.date()}).\n"
 
     if regime_known:
         regime_lines = "\n".join([
