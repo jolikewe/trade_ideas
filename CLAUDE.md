@@ -27,6 +27,8 @@ If the request is unclear, incomplete, or could be interpreted multiple ways:
 ### Git & Commits
 - Never `git add`, `git commit`, or `git push` without an explicit request.
 - Never include `Co-Authored-By` lines in commit messages.
+- Always show the proposed commit message and wait for approval before committing.
+- Always ask for explicit approval before pushing to remote.
 
 ### Formatting Conventions
 - Write a full calendar year as e.g. `2015`, not `2015-2016`. A test window labelled "2015" means 2015-01-01 → 2016-01-01.
@@ -79,9 +81,9 @@ python production/daily_run.py --confirm-trade
 ```
 
 **Daily workflow:**
-1. `download --end <today> --force` — refresh prices
-2. `python production/daily_run.py --refresh` — generate brief
-3. Review `data/production/daily_brief.md` and act
+1. `python production/daily_run.py --refresh` — downloads any missing price data incrementally, then generates brief
+2. Review brief, place trades in IB TWS if regime open and rebalance day
+3. `python production/daily_run.py --confirm-trade` — after executing trades
 
 ---
 
