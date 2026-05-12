@@ -145,26 +145,34 @@ def _generate_brief(today: str, state_path: Path) -> str:
         opt_status = result["status"]
 
     # ── Positions P&L ─────────────────────────────────────────────────────────
-    ps        = PortfolioState()
-    positions = ps.load_positions()
-    pnl_section = ""
+    prod_cfg      = load_config("config/production.yaml")
+    account_size  = prod_cfg["account"]["initial_capital"]
+    ps            = PortfolioState()
+    positions     = ps.load_positions()
+    latest_prices = prices[prices["date"] == latest_date].set_index("ticker")["close"]
+    pnl_section   = ""
     total_unrealised = 0.0
+    current_weights  = pd.Series(dtype=float)
+
     if not positions.empty:
-        latest_prices = (prices[prices["date"] == latest_date]
-                         .set_index("ticker")["close"])
+        mkt_vals = {}
         rows = []
         for _, r in positions.iterrows():
-            tkr   = r["ticker"]
-            ep    = r.get("entry_price", float("nan"))
-            shrs  = r.get("shares", 0)
-            cp    = float(latest_prices.get(tkr, float("nan")))
+            tkr  = r["ticker"]
+            ep   = r.get("entry_price", float("nan"))
+            shrs = r.get("shares", 0)
+            cp   = float(latest_prices.get(tkr, float("nan")))
             if not math.isnan(cp) and not math.isnan(ep):
                 upnl = (cp - ep) * shrs
                 pct  = (cp / ep - 1) * 100
                 total_unrealised += upnl
+                mkt_vals[tkr] = cp * shrs
                 rows.append(f"| {tkr:<8} | {int(shrs):>6} | {ep:>8.2f} | {cp:>8.2f} | {upnl:>+9.2f} | {pct:>+6.1f}% |")
             else:
+                mkt_vals[tkr] = 0.0
                 rows.append(f"| {tkr:<8} | {int(shrs):>6} | {ep:>8.2f} | {'n/a':>8} | {'n/a':>9} | {'n/a':>7} |")
+        total_mkt = sum(mkt_vals.values()) or account_size
+        current_weights = pd.Series({t: v / total_mkt for t, v in mkt_vals.items()})
         pos_md = "\n".join(rows)
         pnl_section = f"""## Current Positions  (unrealised P&L: {total_unrealised:+.2f})
 | Ticker   | Shares | Entry    | Now      | P&L ($)   | P&L (%) |
@@ -176,6 +184,12 @@ def _generate_brief(today: str, state_path: Path) -> str:
     portfolio_state = json.loads(state_path.read_text()) if state_path.exists() else {}
     last_rebal      = portfolio_state.get("last_rebalance_date") or "never"
     is_rebal_day    = ps.is_rebalance_day()
+
+    # ── Trade list ────────────────────────────────────────────────────────────
+    trade_list = _compute_trade_list(
+        positions, current_weights, weights, latest_prices, account_size,
+        tradeable, is_rebal_day,
+    )
 
     # ── Append to log ──────────────────────────────────────────────────────────
     top5 = "|".join(ensemble.nlargest(5).index.tolist())
@@ -229,6 +243,8 @@ _Optimizer: {opt_status}_"""
         action = "FLAT — regime gate closed, no new trades"
         portfolio_section = "## Target Portfolio\n_Regime gate closed — no positions._"
 
+    trade_section = trade_list.strip()
+
     top10    = ensemble.nlargest(10)
     top10_md = "\n".join(f"| {t:<8} | {s:.3f} |" for t, s in top10.items())
     signals_section = f"""## Top 10 Signals
@@ -260,11 +276,81 @@ Last rebalance: {last_rebal}
 
 {portfolio_section}
 
+{trade_section}
+
 {signals_section}
 
 {pnl_section}---
 _Models: {model_name} (production) · Data through {latest_date.date()}_
 """
+
+
+def _compute_trade_list(
+    positions,
+    current_weights,
+    target_weights,
+    latest_prices,
+    account_size: float,
+    tradeable: bool,
+    is_rebal_day: bool,
+) -> str:
+    import pandas as pd
+
+    trade_path = Path("data/production/trade_list.md")
+    held   = set(current_weights.index) if not current_weights.empty else set()
+    target = set(target_weights.index)  if not target_weights.empty  else set()
+    rows   = []
+
+    if not tradeable and held:
+        for tkr in sorted(held):
+            pos  = positions[positions["ticker"] == tkr]
+            shrs = int(pos["shares"].iloc[0]) if not pos.empty else "?"
+            rows.append(f"| {tkr:<8} | SELL     | {shrs!s:>6} | regime closed |")
+        summary = "SELL ALL — regime gate closed, exit all positions"
+
+    elif tradeable and is_rebal_day:
+        for tkr in sorted(held | target):
+            cur_w = float(current_weights.get(tkr, 0.0))
+            tgt_w = float(target_weights.get(tkr, 0.0))
+            price = float(latest_prices.get(tkr, float("nan")))
+            diff  = tgt_w - cur_w
+            tgt_shrs = (int(tgt_w * account_size / price)
+                        if tgt_w > 0 and not math.isnan(price) else "?")
+            if tgt_w == 0:
+                pos  = positions[positions["ticker"] == tkr]
+                shrs = int(pos["shares"].iloc[0]) if not pos.empty else "?"
+                rows.append(f"| {tkr:<8} | SELL     | {shrs!s:>6} | dropped from target |")
+            elif cur_w == 0:
+                rows.append(f"| {tkr:<8} | BUY      | {tgt_shrs!s:>6} | new → {tgt_w:.1%} |")
+            elif abs(diff) >= 0.05:
+                verb = "add" if diff > 0 else "trim"
+                rows.append(f"| {tkr:<8} | REBALANCE| {tgt_shrs!s:>6} | {verb} {abs(diff):.1%} |")
+            else:
+                rows.append(f"| {tkr:<8} | HOLD     | {'—':>6} | diff {diff:+.1%} |")
+        summary = "REBALANCE — execute trades below"
+
+    else:
+        summary = "HOLD — no trades today"
+        for tkr in sorted(held):
+            rows.append(f"| {tkr:<8} | HOLD     | {'—':>6} | |")
+
+    header = "| Ticker   | Action   | Shares | Notes               |"
+    sep    = "|----------|----------|--------|---------------------|"
+    body   = "\n".join(rows) if rows else "| _(no open positions)_ | | | |"
+
+    md = f"""## Trades
+_{summary}_
+
+{header}
+{sep}
+{body}
+
+_Edit `data/production/trade_list.md` to override before executing in IB TWS._
+_After executing: `python production/daily_run.py --confirm-trade`_"""
+
+    trade_path.parent.mkdir(parents=True, exist_ok=True)
+    trade_path.write_text(md.strip() + "\n")
+    return md
 
 
 def _fetch_regime_data(start: str, end: str):
