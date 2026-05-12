@@ -34,7 +34,7 @@ class BacktestEngine:
                               .set_index("date")["vix_close"])
             if vix_series is not None:
                 vix_series = vix_series.reindex(spy_series.index).ffill()
-                regime = self.regime_detector.detect_composite_regime(vix_series, spy_series)
+                regime = self.regime_detector.detect_composite_regime(vix_series, spy_series, prices=prices)
             else:
                 regime = pd.DataFrame({"tradeable": 1}, index=spy_series.index)
         else:
