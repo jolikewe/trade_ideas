@@ -99,7 +99,9 @@ def _generate_brief(today: str, state_path: Path) -> str:
 
     # ── Features & signals ────────────────────────────────────────────────────
     feats         = MeanReversionFeatures().compute_all(prices)
-    latest_feats  = feats[feats["date"] == latest_date].copy()
+    # Restrict scoring to current S&P 500 members — historical tickers are for training only
+    active_tickers = set(pit.get_universe(latest_date))
+    latest_feats  = feats[(feats["date"] == latest_date) & feats["ticker"].isin(active_tickers)].copy()
     n_stocks      = len(latest_feats)
 
     X_r = latest_feats.set_index("ticker")[ridge.feature_names].fillna(0)
