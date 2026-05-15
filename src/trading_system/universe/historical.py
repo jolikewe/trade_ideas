@@ -45,7 +45,7 @@ class PointInTimeUniverse:
                 cols_lower = {c: c.lower().replace(" ", "_") for c in changes.columns}
                 changes = changes.rename(columns=cols_lower)
 
-                date_col     = next((c for c in changes.columns if c.startswith("date")), None)
+                date_col     = next((c for c in changes.columns if "date" in c), None)
                 rem_tkr_col  = next((c for c in changes.columns if "removed" in c and "ticker" in c), None)
                 add_tkr_col  = next((c for c in changes.columns if "added" in c and "ticker" in c), None)
 

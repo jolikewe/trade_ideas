@@ -78,7 +78,9 @@ def _generate_brief(today: str, state_path: Path) -> str:
 
     ridge     = RidgeModel.load(str(ridge_path))
     lgb_model = LightGBMModel.load(str(lgb_path))
-    ridge_train_ic = json.loads((ridge_path.parent / "metadata.json").read_text())["train_ic"]
+    ridge_meta     = json.loads((ridge_path.parent / "metadata.json").read_text())
+    ridge_train_ic = ridge_meta["train_ic"]
+    model_train_end = ridge_meta.get("train_end", "")
     lgb_train_ic   = json.loads((lgb_path.parent / "metadata.json").read_text())["train_ic"]
 
     # ── Prices (incremental download built-in) ────────────────────────────────
@@ -212,7 +214,11 @@ def _generate_brief(today: str, state_path: Path) -> str:
 
     stale_warn = ""
     if days_stale > 1:
-        stale_warn = f"\n> ⚠️ **Data is {days_stale} days stale** (latest: {latest_date.date()}).\n"
+        stale_warn += f"\n> ⚠️ **Data is {days_stale} days stale** (latest: {latest_date.date()}).\n"
+    if model_train_end:
+        model_age = (pd.Timestamp(today) - pd.Timestamp(model_train_end)).days
+        if model_age > 35:
+            stale_warn += f"\n> ⚠️ **Models are {model_age} days old** (trained through {model_train_end}). Run: `python production/retrain.py`\n"
 
     if regime_known:
         regime_lines = "\n".join([

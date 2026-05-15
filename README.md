@@ -28,7 +28,7 @@ pip install -e .
 pytest tests/
 
 # 3. Download price data
-python -m trading_system.cli download --start 2010-01-01 --end 2025-12-31
+python -m trading_system.cli download --start 2010-01-01 --end <today>
 
 # 4. Train models (11 walk-forward windows)
 python -m trading_system.cli train --verbose
@@ -49,6 +49,15 @@ python production/daily_run.py --refresh   # incremental download + brief
 # After executing trades in IB TWS:
 python production/daily_run.py --confirm-trade
 ```
+
+## Monthly Retrain
+
+```bash
+python production/retrain.py              # skips if models are < 30 days old
+python production/retrain.py --force      # retrain unconditionally
+```
+
+The brief will warn when models are > 35 days old.
 
 Brief is saved to `data/production/daily_brief.md`. Historical log at `data/production/brief_log.csv`.
 

@@ -48,6 +48,15 @@ python production/daily_run.py --confirm-trade  # after executing trades
 
 Run at ~9am GMT+8 (after NYSE close at 4am GMT+8). Act before NYSE open at 9:30pm GMT+8.
 
+## Monthly Retrain
+
+```bash
+python production/retrain.py        # skips if models trained < 30 days ago
+python production/retrain.py --force
+```
+
+The brief warns when models are > 35 days old. Retrain refreshes the production model on all history through today.
+
 ## Configuration
 
 | File | Purpose |
@@ -76,6 +85,7 @@ data/
   production/
     daily_brief.md      Latest brief (overwritten daily)
     brief_log.csv       Historical log (appended daily)
+    trade_list.md       Today's trades (editable before executing in IB TWS)
     positions.csv       Current holdings — edit after executing trades
     rebalance_state.json
 ```
@@ -99,5 +109,5 @@ data/
 
 ## Known Issues
 
-- `BRK.B` and `BF.B` always fail to download from yfinance — expected, safely ignored.
-- Price data is sourced from yfinance free tier — survivorship bias exists for pre-2010 delistings.
+- `BRK.B` and `BF.B` always fail to download from yfinance — skipped automatically, no output shown.
+- Universe includes historical S&P 500 removals from Wikipedia's changes table (~2000–present). Pre-2000 delistings are not captured — residual survivorship bias exists for that period.
