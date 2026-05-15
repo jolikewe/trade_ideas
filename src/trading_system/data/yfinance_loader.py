@@ -1,7 +1,11 @@
+import contextlib
+import io
 import pandas as pd
 import yfinance as yf
 from pathlib import Path
 from tqdm import tqdm
+
+_SKIP_TICKERS = {"BRK.B", "BF.B"}  # always fail on yfinance free tier
 
 class YFinanceLoader:
     def __init__(self, cache_dir: str = "data/raw/yfinance", threads: int = 10,
@@ -30,8 +34,10 @@ class YFinanceLoader:
             start = str((last_date + pd.Timedelta(days=1)).date())
 
         try:
-            raw = yf.download(ticker, start=start, end=end,
-                              auto_adjust=self.auto_adjust, progress=False)
+            _sink = io.StringIO()
+            with contextlib.redirect_stdout(_sink), contextlib.redirect_stderr(_sink):
+                raw = yf.download(ticker, start=start, end=end,
+                                  auto_adjust=self.auto_adjust, progress=False)
             if raw.empty:
                 return existing  # no new data, return what we have
             if isinstance(raw.columns, pd.MultiIndex):
@@ -52,6 +58,7 @@ class YFinanceLoader:
                       force_refresh: bool = False,
                       show_progress: bool = True) -> pd.DataFrame:
         frames = []
+        tickers = [t for t in tickers if t not in _SKIP_TICKERS]
         for ticker in tqdm(tickers, desc="Loading prices", disable=not show_progress):
             df = self.load_ticker(ticker, start, end, force_refresh)
             if df is not None:
