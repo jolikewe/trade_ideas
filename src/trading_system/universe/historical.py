@@ -6,8 +6,11 @@ _DEFAULT_PATH = "data/raw/sp500_pit_constituents.csv"
 class PointInTimeUniverse:
     def __init__(self, df: pd.DataFrame):
         self.df = df
-        self.df["added_date"] = pd.to_datetime(self.df["added_date"])
-        self.df["removed_date"] = pd.to_datetime(self.df.get("removed_date", pd.NaT))
+        self.df["added_date"] = pd.to_datetime(self.df["added_date"], errors="coerce")
+        self.df["removed_date"] = pd.to_datetime(
+            self.df["removed_date"] if "removed_date" in self.df.columns else pd.NaT,
+            errors="coerce",
+        )
 
     @classmethod
     def load_or_build(cls, path: str = _DEFAULT_PATH) -> "PointInTimeUniverse":
@@ -69,10 +72,14 @@ class PointInTimeUniverse:
                         tkr = row["ticker"].strip()
                         if tkr in current_tickers:
                             continue  # still active; already in current table
+                        fallback = add_dates.get(tkr)
+                        added = fallback.date().isoformat() if pd.notna(fallback) else "2000-01-01"
+                        removed = row["removed_date"]
+                        removed = removed.date().isoformat() if pd.notna(removed) else None
                         historical_rows.append({
                             "ticker": tkr,
-                            "added_date": add_dates.get(tkr, pd.Timestamp("2000-01-01")),
-                            "removed_date": row["removed_date"],
+                            "added_date": added,
+                            "removed_date": removed,
                         })
             except Exception:
                 pass  # fall back to current-only if parsing fails
