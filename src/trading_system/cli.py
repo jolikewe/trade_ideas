@@ -85,6 +85,18 @@ def _cmd_train(args):
     feats = MeanReversionFeatures().compute_all(prices)
     labels = LabelBuilder().build_labels(prices)
 
+    # PIT filter: only train on rows where ticker was in the S&P 500
+    import pandas as pd
+    pit_df = pit.df[["ticker", "added_date", "removed_date"]].copy()
+    feats["date"] = pd.to_datetime(feats["date"])
+    feats = feats.merge(pit_df, on="ticker", how="left")
+    feats = feats[
+        (feats["date"] >= feats["added_date"]) &
+        (feats["removed_date"].isna() | (feats["date"] < feats["removed_date"]))
+    ].drop(columns=["added_date", "removed_date"])
+    if args.verbose:
+        print(f"PIT filter: {feats['ticker'].nunique()} tickers, {len(feats):,} rows")
+
     trainer = ModelTrainer()
     windows = _parse_windows(args.windows, cfg)
 
@@ -153,6 +165,10 @@ def _cmd_backtest(args):
     sig_gen = ICWeightedSignalGenerator()
     signals: dict = {}
     for date, group in test_feats.groupby("date"):
+        active = set(pit.get_universe(pd.Timestamp(date)))
+        group = group[group["ticker"].isin(active)]
+        if len(group) < 10:
+            continue
         r_X = group.set_index("ticker")[ridge.feature_names].fillna(0)
         l_X = group.set_index("ticker")[lgb_model.feature_names].fillna(0)
         ridge_scores = pd.Series(ridge.predict(r_X), index=r_X.index)
@@ -214,10 +230,20 @@ def _cmd_production_train(args):
     train_start = cfg["data_start_date"]
     train_end = cfg["data_end_date"]
 
+    import pandas as pd
+
     pit = PointInTimeUniverse.load_or_build()
     loader = DataLoader()
     print("Loading prices...")
     prices = loader.load_prices(pit.all_tickers, train_start, train_end)
+
+    pit_df = pit.df[["ticker", "added_date", "removed_date"]].copy()
+    prices["date"] = pd.to_datetime(prices["date"])
+    prices = prices.merge(pit_df, on="ticker", how="left")
+    prices = prices[
+        (prices["date"] >= prices["added_date"]) &
+        (prices["removed_date"].isna() | (prices["date"] < prices["removed_date"]))
+    ].drop(columns=["added_date", "removed_date"])
 
     print("Computing features...")
     feats = MeanReversionFeatures().compute_all(prices)
