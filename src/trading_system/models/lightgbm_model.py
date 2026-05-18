@@ -5,8 +5,9 @@ import json
 from pathlib import Path
 
 FIXED_PARAMS = {
-    "num_iterations": 300,
+    "num_iterations": 500,
     "reg_lambda": 1.0,
+    "reg_alpha": 0.1,
     "subsample": 0.8,
     "subsample_freq": 1,
     "colsample_bytree": 0.8,
@@ -16,8 +17,8 @@ FIXED_PARAMS = {
 }
 
 class LightGBMModel:
-    def __init__(self, max_depth: int = 4, num_leaves: int = 31,
-                 learning_rate: float = 0.01, min_child_samples: int = 50):
+    def __init__(self, max_depth: int = 4, num_leaves: int = 20,
+                 learning_rate: float = 0.01, min_child_samples: int = 300):
         self.params = {**FIXED_PARAMS, "max_depth": max_depth,
                        "num_leaves": num_leaves, "learning_rate": learning_rate,
                        "min_child_samples": min_child_samples}
