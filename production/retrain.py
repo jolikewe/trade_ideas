@@ -48,11 +48,23 @@ def main():
     from trading_system.labels.builder import LabelBuilder
     from trading_system.models.trainer import ModelTrainer
 
+    import pandas as pd
+
     pit    = PointInTimeUniverse.load_or_build()
     loader = DataLoader()
     print("Loading prices...", end=" ", flush=True)
     prices = loader.load_prices(pit.all_tickers, args.train_start, today)
     print(f"done ({prices['ticker'].nunique()} tickers)")
+
+    # Point-in-time filter: only train on rows where the ticker was in the S&P 500
+    pit_df = pit.df[["ticker", "added_date", "removed_date"]].copy()
+    prices["date"] = pd.to_datetime(prices["date"])
+    prices = prices.merge(pit_df, on="ticker", how="left")
+    prices = prices[
+        (prices["date"] >= prices["added_date"]) &
+        (prices["removed_date"].isna() | (prices["date"] < prices["removed_date"]))
+    ].drop(columns=["added_date", "removed_date"])
+    print(f"After PIT filter: {prices['ticker'].nunique()} tickers, {len(prices):,} rows")
 
     feats  = MeanReversionFeatures().compute_all(prices)
     labels = LabelBuilder().build_labels(prices)
