@@ -8,11 +8,13 @@ Low-frequency ML-driven mean reversion on U.S. equities.
 |---|---|
 | Universe | S&P 500 (~501 tickers via yfinance) |
 | Signal | Mean reversion: z-score oversold → buy |
-| Models | Ridge + LightGBM ensemble (12 features) |
-| Positions | 6 stocks, factor-neutral weighted (cvxpy) |
+| Model | Ridge regression (12 features) |
+| Positions | 20 stocks, 8% max weight (cvxpy) |
 | Holding period | 5 days |
+| Stop-loss | 10% trailing per position (tightened to 5% when regime closes) |
 | Rebalance | Every 5 business days, regime-gated |
 | Regime gate | VIX < 25 AND SPY > 200-day MA AND momentum z < 0.5 |
+| Regime close | Losers liquidated immediately, winners held with tightened stop |
 | Validation | 11 walk-forward windows, 4yr train / 1yr val / 1yr test (2010–2025) |
 | Account | $2,000 (Interactive Brokers) |
 
@@ -88,7 +90,7 @@ src/trading_system/
   features/mean_reversion.py    # 12 MR features
   labels/builder.py             # 5-day forward return labels
   models/
-    ridge.py, lightgbm_model.py, trainer.py
+    ridge.py, trainer.py
   portfolio/optimizer.py        # Factor-neutral optimizer (cvxpy/ECOS)
   regime/detector.py            # Composite regime gate
   backtest/

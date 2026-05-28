@@ -40,7 +40,7 @@ If the request is unclear, incomplete, or could be interpreted multiple ways:
 
 ## Project Context
 
-**Strategy:** Mean reversion on U.S. equities. ML ensemble (Ridge + LightGBM) predicts 5-day forward returns. Factor-neutral portfolio via cvxpy. Regime gate (VIX + SPY 200-day MA + momentum z-score) blocks trading in bad markets. All three gates use AND logic — all must pass.
+**Strategy:** Mean reversion on U.S. equities. Ridge regression predicts 5-day forward returns. 20-position long-only portfolio via cvxpy (8% max weight per position). Regime gate (VIX + SPY 200-day MA + momentum z-score) blocks new trades — on regime close, losing positions are liquidated and winning positions get a tightened 5% trailing stop. Per-position 10% trailing stop-loss active at all times. All three regime gates use AND logic — all must pass.
 
 **Universe:** S&P 500 current constituents (~501 tickers) via `PointInTimeUniverse`. BRK.B and BF.B always fail to download — expected, ignore those warnings.
 
@@ -70,7 +70,7 @@ python -m trading_system.cli train --verbose
 # Backtest a single window (1–11)
 python -m trading_system.cli backtest --window 3
 
-# Train production model on full history (no val set, equal ridge/lgb weighting)
+# Train production model on full history (Ridge only, no val set)
 python -m trading_system.cli production-train
 
 # Daily brief (generates + saves to data/production/daily_brief.md)
@@ -92,10 +92,8 @@ python production/daily_run.py --confirm-trade
 | Path | Contents |
 |------|----------|
 | `data/models/mean_reversion/model_mr_zscore_12feat_ridge/window_N/model.pkl` | Ridge model (pickle) |
-| `data/models/mean_reversion/model_mr_zscore_12feat_lightgbm/window_N/model.lgb` | LightGBM booster |
-| `data/models/mean_reversion/model_mr_zscore_12feat_lightgbm/window_N/model_meta.json` | LightGBM metadata (train_ic, feature_names) |
-| `data/models/mean_reversion/*/window_N/metadata.json` | Trainer metadata (train/val dates, val_ic) |
-| `data/models/mean_reversion/*/production/` | Same layout, no val_ic (trained on all data) |
+| `data/models/mean_reversion/model_mr_zscore_12feat_ridge/window_N/metadata.json` | Trainer metadata (train/val dates, val_ic) |
+| `data/models/mean_reversion/model_mr_zscore_12feat_ridge/production/` | Production model, no val_ic (trained on all data) |
 | `data/results/backtests/window_N_<timestamp>.json` | Backtest results per window |
 
 ---

@@ -3,7 +3,7 @@ import pandas as pd
 import cvxpy as cp
 
 class FactorNeutralOptimizer:
-    def __init__(self, target_n: int = 6, max_weight: float = 0.25,
+    def __init__(self, target_n: int = 20, max_weight: float = 0.08,
                  mktrf_threshold: float = 0.15, factor_threshold: float = 0.10):
         self.target_n = target_n
         self.max_weight = max_weight
