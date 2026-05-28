@@ -78,9 +78,6 @@ data/
     model_mr_zscore_12feat_ridge/
       window_1/ … window_11/   model.pkl, metadata.json
       production/              model.pkl, metadata.json
-    model_mr_zscore_12feat_lightgbm/
-      window_1/ … window_11/   model.lgb, model_meta.json, metadata.json
-      production/              model.lgb, model_meta.json, metadata.json
   results/backtests/    window_N_<timestamp>.json
   production/
     daily_brief.md      Latest brief (overwritten daily)
@@ -98,9 +95,9 @@ data/
 
 **Walk-forward:** 4yr train / 1yr val / 1yr test, 5-day purge gap, 10% embargo. 11 windows covering 2010–2025.
 
-**Ensemble:** Equal-weight rank average of Ridge and LightGBM percentile scores. (Production models have no val set so IC-weighted ensemble is not applicable.)
+**Model:** Ridge regression only. Scores ranked to percentiles for signal generation.
 
-**Portfolio:** cvxpy/ECOS factor-neutral optimizer. Long-only, max 25% per position, 6 positions target.
+**Portfolio:** cvxpy/ECOS optimizer. Long-only, 20 positions target, 8% max weight per position. 10% per-position trailing stop-loss (tightened to 5% when regime closes).
 
 **Regime gate (AND logic — all must pass):**
 - VIX < 25

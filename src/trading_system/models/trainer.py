@@ -1,10 +1,10 @@
 import json
-import pandas as pd
-import numpy as np
 from pathlib import Path
-from .ridge import RidgeModel
-from .lightgbm_model import LightGBMModel
+
+import pandas as pd
+
 from ..features.mean_reversion import FEATURE_COLS
+from .ridge import RidgeModel
 
 class ModelTrainer:
     def __init__(self, model_dir: str = "data/models/mean_reversion",
@@ -46,15 +46,6 @@ class ModelTrainer:
                             train_start, train_end, val_start, val_end)
         results["ridge"] = {"train_ic": ridge.train_ic, "val_ic": ridge.val_ic}
 
-        lgb_model = LightGBMModel()
-        lgb_model.fit(X_train, y_train, X_val, y_val)
-        out_dir_lgb = self.model_dir / f"{model_name}_lightgbm" / f"window_{window_id}"
-        out_dir_lgb.mkdir(parents=True, exist_ok=True)
-        lgb_model.save(str(out_dir_lgb / "model.json"))
-        self._save_metadata(out_dir_lgb, lgb_model.train_ic, lgb_model.val_ic, feature_cols,
-                            train_start, train_end, val_start, val_end)
-        results["lightgbm"] = {"train_ic": lgb_model.train_ic, "val_ic": lgb_model.val_ic}
-
         return results
 
     def train_production(self, features: pd.DataFrame, labels: pd.DataFrame,
@@ -79,15 +70,6 @@ class ModelTrainer:
         self._save_metadata(out_dir, ridge.train_ic, None, feature_cols,
                             train_start, train_end, None, None)
         results["ridge"] = {"train_ic": ridge.train_ic}
-
-        lgb_model = LightGBMModel()
-        lgb_model.fit(X_train, y_train)
-        out_dir_lgb = self.model_dir / f"{model_name}_lightgbm" / "production"
-        out_dir_lgb.mkdir(parents=True, exist_ok=True)
-        lgb_model.save(str(out_dir_lgb / "model.json"))
-        self._save_metadata(out_dir_lgb, lgb_model.train_ic, None, feature_cols,
-                            train_start, train_end, None, None)
-        results["lightgbm"] = {"train_ic": lgb_model.train_ic}
 
         return results
 

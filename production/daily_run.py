@@ -16,7 +16,7 @@ LOG_COLS = [
     "vix", "spy", "spy_ma200", "momentum_z",
     "vix_ok", "spy_ok", "momentum_ok", "regime_open", "regime_consec_days",
     "n_stocks", "n_buy_zone", "top_tickers",
-    "ridge_train_ic", "lgb_train_ic",
+    "ridge_train_ic",
 ]
 
 
@@ -57,8 +57,6 @@ def _generate_brief(today: str, state_path: Path) -> str:
     from trading_system.universe.historical import PointInTimeUniverse
     from trading_system.features.mean_reversion import MeanReversionFeatures
     from trading_system.models.ridge import RidgeModel
-    from trading_system.models.lightgbm_model import LightGBMModel
-    from trading_system.backtest.cross_sectional.signal_generator import ICWeightedSignalGenerator
     from trading_system.regime.detector import RegimeDetector
     from trading_system.portfolio.optimizer import FactorNeutralOptimizer
     from trading_system.utils.config import load_config
@@ -70,18 +68,15 @@ def _generate_brief(today: str, state_path: Path) -> str:
     model_dir = Path("data/models/mean_reversion")
     model_name = "model_mr_zscore_12feat"
     ridge_path = model_dir / f"{model_name}_ridge" / "production" / "model.pkl"
-    lgb_path   = model_dir / f"{model_name}_lightgbm" / "production" / "model.json"
 
-    if not ridge_path.exists() or not lgb_path.with_suffix(".lgb").exists():
+    if not ridge_path.exists():
         return _stub_brief(today, state_path,
-                           "Production models not found. Run: python -m trading_system.cli production-train")
+                           "Production model not found. Run: python -m trading_system.cli production-train")
 
-    ridge     = RidgeModel.load(str(ridge_path))
-    lgb_model = LightGBMModel.load(str(lgb_path))
+    ridge = RidgeModel.load(str(ridge_path))
     ridge_meta     = json.loads((ridge_path.parent / "metadata.json").read_text())
     ridge_train_ic = ridge_meta["train_ic"]
     model_train_end = ridge_meta.get("train_end", "")
-    lgb_train_ic   = json.loads((lgb_path.parent / "metadata.json").read_text())["train_ic"]
 
     # ── Prices (incremental download built-in) ────────────────────────────────
     pit    = PointInTimeUniverse.load_or_build()
@@ -104,12 +99,9 @@ def _generate_brief(today: str, state_path: Path) -> str:
     latest_feats  = feats[(feats["date"] == latest_date) & feats["ticker"].isin(active_tickers)].copy()
     n_stocks      = len(latest_feats)
 
-    X_r = latest_feats.set_index("ticker")[ridge.feature_names].fillna(0)
-    X_l = latest_feats.set_index("ticker")[lgb_model.feature_names].fillna(0)
-    ridge_scores = pd.Series(ridge.predict(X_r), index=X_r.index)
-    lgb_scores   = pd.Series(lgb_model.predict(X_l), index=X_l.index)
-    ensemble     = (ridge_scores.rank(pct=True) + lgb_scores.rank(pct=True)) / 2
-    ensemble     = ensemble.rank(pct=True)
+    X = latest_feats.set_index("ticker")[ridge.feature_names].fillna(0)
+    scores   = pd.Series(ridge.predict(X), index=X.index)
+    ensemble = scores.rank(pct=True)
     n_buy_zone   = int((ensemble >= 0.75).sum())
 
     # ── Regime ────────────────────────────────────────────────────────────────
@@ -144,7 +136,7 @@ def _generate_brief(today: str, state_path: Path) -> str:
     weights    = pd.Series(dtype=float)
     opt_status = ""
     if tradeable:
-        result     = FactorNeutralOptimizer(target_n=6).optimize(ensemble)
+        result     = FactorNeutralOptimizer().optimize(ensemble)
         weights    = result["weights"]
         opt_status = result["status"]
 
@@ -208,7 +200,6 @@ def _generate_brief(today: str, state_path: Path) -> str:
         "n_stocks": n_stocks, "n_buy_zone": n_buy_zone,
         "top_tickers": top5,
         "ridge_train_ic": round(ridge_train_ic, 4),
-        "lgb_train_ic": round(lgb_train_ic, 4),
     })
 
     # ── Format ─────────────────────────────────────────────────────────────────
@@ -260,7 +251,7 @@ _Optimizer: {opt_status}_"""
 |----------|--------|
 {top10_md}
 
-_Signal stats: {n_stocks} stocks scored · {n_buy_zone} in buy zone (top quartile) · model train IC: ridge {ridge_train_ic:.4f} / lgb {lgb_train_ic:.4f}_"""
+_Signal stats: {n_stocks} stocks scored · {n_buy_zone} in buy zone (top quartile) · ridge train IC: {ridge_train_ic:.4f}_"""
 
     return f"""---
 date: {today}

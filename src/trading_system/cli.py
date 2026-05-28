@@ -1,5 +1,4 @@
 import argparse
-import sys
 
 def main():
     parser = argparse.ArgumentParser(prog="trading-system",
@@ -13,7 +12,7 @@ def main():
     dl.add_argument("--force", action="store_true")
 
     tr = subparsers.add_parser("train", help="Train models")
-    tr.add_argument("--models", default="all", choices=["all", "ridge", "lightgbm"])
+    tr.add_argument("--models", default="ridge", choices=["ridge"])
     tr.add_argument("--feature-sets", default="all")
     tr.add_argument("--windows", default="all")
     tr.add_argument("--verbose", "-v", action="store_true")
@@ -63,7 +62,6 @@ def _cmd_train(args):
     from .labels.builder import LabelBuilder
     from .models.trainer import ModelTrainer
     from .utils.config import load_config
-    import yaml
 
     cfg = load_config("config/backtest.yaml")["walk_forward"]
     start = cfg["data_start_date"]
@@ -110,18 +108,18 @@ def _cmd_train(args):
 
 def _cmd_backtest(args):
     import json
+    from datetime import datetime
+    from pathlib import Path
+
     import pandas as pd
     import yfinance as yf
-    from pathlib import Path
-    from datetime import datetime
-    from .utils.config import load_config
-    from .data.loaders import DataLoader
-    from .universe.historical import PointInTimeUniverse
-    from .features.mean_reversion import MeanReversionFeatures, FEATURE_COLS
-    from .models.ridge import RidgeModel
-    from .models.lightgbm_model import LightGBMModel
-    from .backtest.cross_sectional.signal_generator import ICWeightedSignalGenerator
+
     from .backtest.cross_sectional.engine import BacktestEngine
+    from .data.loaders import DataLoader
+    from .features.mean_reversion import MeanReversionFeatures
+    from .models.ridge import RidgeModel
+    from .universe.historical import PointInTimeUniverse
+    from .utils.config import load_config
 
     cfg = load_config("config/backtest.yaml")["walk_forward"]
     windows = _parse_windows("all", cfg)
@@ -140,17 +138,13 @@ def _cmd_backtest(args):
     model_dir = Path("data/models/mean_reversion")
     model_name = "model_mr_zscore_12feat"
     ridge_path = model_dir / f"{model_name}_ridge" / f"window_{args.window}" / "model.pkl"
-    lgb_path = model_dir / f"{model_name}_lightgbm" / f"window_{args.window}" / "model.json"
-    lgb_booster_path = lgb_path.with_suffix(".lgb")
 
-    if not ridge_path.exists() or not lgb_booster_path.exists():
-        print(f"Error: models for window {args.window} not found. Run 'train' first.")
+    if not ridge_path.exists():
+        print(f"Error: Ridge model for window {args.window} not found. Run 'train' first.")
         return
 
     ridge = RidgeModel.load(str(ridge_path))
-    lgb_model = LightGBMModel.load(str(lgb_path))
-    val_ics = {"ridge": ridge.val_ic, "lightgbm": lgb_model.val_ic}
-    print(f"Models: ridge val_ic={ridge.val_ic:.4f}, lgb val_ic={lgb_model.val_ic:.4f}")
+    print(f"Model: ridge val_ic={ridge.val_ic:.4f}")
 
     pit = PointInTimeUniverse.load_or_build()
     loader = DataLoader()
@@ -162,18 +156,14 @@ def _cmd_backtest(args):
     test_feats = feats[(feats["date"] >= test_start) & (feats["date"] < test_end)].copy()
 
     print("Generating signals...")
-    sig_gen = ICWeightedSignalGenerator()
     signals: dict = {}
     for date, group in test_feats.groupby("date"):
         active = set(pit.get_universe(pd.Timestamp(date)))
         group = group[group["ticker"].isin(active)]
         if len(group) < 10:
             continue
-        r_X = group.set_index("ticker")[ridge.feature_names].fillna(0)
-        l_X = group.set_index("ticker")[lgb_model.feature_names].fillna(0)
-        ridge_scores = pd.Series(ridge.predict(r_X), index=r_X.index)
-        lgb_scores = pd.Series(lgb_model.predict(l_X), index=l_X.index)
-        signals[date] = sig_gen.generate({"ridge": ridge_scores, "lightgbm": lgb_scores}, val_ics)
+        X = group.set_index("ticker")[ridge.feature_names].fillna(0)
+        signals[date] = pd.Series(ridge.predict(X), index=X.index)
 
     signals_df = pd.DataFrame(signals).T
     signals_df.index = pd.DatetimeIndex(signals_df.index)
@@ -191,11 +181,14 @@ def _cmd_backtest(args):
             vix_series = vix_raw["close"].rename(None)
             vix_series.index = pd.to_datetime(vix_series.index)
 
-    test_prices = prices[(prices["date"] >= test_start) & (prices["date"] < test_end)].copy()
-    n_days = test_prices["date"].nunique()
-    print(f"Running backtest on {n_days} trading days...")
+    pre_start = pd.bdate_range(end=test_start, periods=401)[0]
+    extended_prices = prices[
+        (prices["date"] >= pre_start) & (prices["date"] < pd.Timestamp(test_end))
+    ].copy()
+    n_days = extended_prices[extended_prices["date"] >= pd.Timestamp(test_start)]["date"].nunique()
+    print(f"Running backtest on {n_days} trading days (+ {(pd.Timestamp(test_start) - pre_start).days}d warmup)...")
     engine = BacktestEngine()
-    result = engine.run(test_prices, signals_df, test_start, test_end,
+    result = engine.run(extended_prices, signals_df, test_start, test_end,
                         use_regime=not args.no_regime, vix_series=vix_series)
 
     out_dir = Path("data/results/backtests")
@@ -205,7 +198,7 @@ def _cmd_backtest(args):
     payload = {
         "window": args.window, "train_start": ts, "train_end": te,
         "val_start": vs, "val_end": ve, "test_start": test_start, "test_end": test_end,
-        "use_regime": not args.no_regime, "val_ics": val_ics,
+        "use_regime": not args.no_regime, "val_ic": ridge.val_ic,
         "sharpe": result["sharpe"], "max_drawdown": result["max_drawdown"],
         "dsr": result["dsr"], "returns": result["returns"],
     }
