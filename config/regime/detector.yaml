@@ -4,7 +4,7 @@ spy_gate:
   ma_window: 200
 momentum_gate:
   enabled: true
-  z_threshold: 0.5
+  z_threshold: 1.5
   lookback_long: 252
   lookback_skip: 21
   smooth_window: 60
