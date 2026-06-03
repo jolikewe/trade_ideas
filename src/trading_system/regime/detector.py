@@ -49,16 +49,21 @@ class RegimeDetector:
         return (regime["tradeable"] >= min_score)
 
     def _compute_momentum_z(self, prices: pd.DataFrame) -> pd.Series:
-        dates = sorted(prices["date"].unique())
+        close = prices.pivot(index="date", columns="ticker", values="close")
+        # 12-1 momentum: return from (lookback_long ago) to (lookback_skip ago)
+        lagged_far = close.shift(self.mom_lookback_long)
+        lagged_near = close.shift(self.mom_lookback_skip)
+        mom_ret = lagged_near / lagged_far - 1
+
         spread_series = {}
-        for d in dates:
-            day_prices = prices[prices["date"] == d]
-            mom = day_prices.set_index("ticker")["close"]
-            if len(mom) < 10:
+        for d in mom_ret.index:
+            row = mom_ret.loc[d].dropna()
+            if len(row) < 10:
                 continue
-            top_pct = mom.quantile(1 - self.mom_top_pct)
-            bot_pct = mom.quantile(self.mom_top_pct)
-            spread_series[d] = (mom[mom >= top_pct].mean() - mom[mom <= bot_pct].mean())
+            top_thresh = row.quantile(1 - self.mom_top_pct)
+            bot_thresh = row.quantile(self.mom_top_pct)
+            spread_series[d] = row[row >= top_thresh].mean() - row[row <= bot_thresh].mean()
+
         if not spread_series:
             return pd.Series(dtype=float)
         spread = pd.Series(spread_series).sort_index()

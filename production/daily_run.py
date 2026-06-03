@@ -358,21 +358,28 @@ def _fetch_regime_data(start: str, end: str):
     import yfinance as yf
 
     def _flatten(df):
-        if df.empty:
-            return df
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = [c[0].lower() for c in df.columns]
-        else:
+        elif not df.empty:
             df.columns = [c.lower() for c in df.columns]
         return df
 
     try:
+        spy_raw = _flatten(yf.download("SPY", start=start, end=end,
+                                        auto_adjust=True, progress=False))
+        if spy_raw.empty or "close" not in spy_raw:
+            return None, None
+
         vix_raw = _flatten(yf.download("^VIX", start=start, end=end,
                                         auto_adjust=True, progress=False))
-        spy_raw = _flatten(yf.download("SPY",  start=start, end=end,
-                                        auto_adjust=True, progress=False))
-        if vix_raw.empty or spy_raw.empty or "close" not in vix_raw or "close" not in spy_raw:
+        if vix_raw.empty or "close" not in vix_raw:
+            # yfinance ^VIX sometimes fails for longer ranges — retry with 1yr
+            fallback_start = str((pd.Timestamp(end) - pd.DateOffset(days=365)).date())
+            vix_raw = _flatten(yf.download("^VIX", start=fallback_start, end=end,
+                                            auto_adjust=True, progress=False))
+        if vix_raw.empty or "close" not in vix_raw:
             return None, None
+
         vix = vix_raw["close"].rename(None)
         spy = spy_raw["close"].rename(None)
         vix.index = pd.to_datetime(vix.index)
