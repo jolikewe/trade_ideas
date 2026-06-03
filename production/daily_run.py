@@ -217,7 +217,7 @@ def _generate_brief(today: str, state_path: Path) -> str:
         regime_lines = "\n".join([
             f"| VIX          | {vix_val:.1f}       | < 25      | {icon(vix_ok)} |",
             f"| SPY vs MA200 | {spy_val:.2f} / {spy_ma200:.2f} | SPY > MA  | {icon(spy_ok)} |",
-            f"| Momentum Z   | {mom_z:.2f}      | < 0.5     | {icon(mom_ok)} |",
+            f"| Momentum Z   | {mom_z:.2f}      | < {detector.mom_z_threshold}     | {icon(mom_ok)} |",
         ])
         consec_label = f"{'open' if tradeable else 'closed'} {regime_consec} day{'s' if regime_consec != 1 else ''}"
         regime_status = f"{'OPEN 🟢' if tradeable else 'CLOSED 🔴'}  _(regime {consec_label})_"
