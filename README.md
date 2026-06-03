@@ -13,7 +13,7 @@ Low-frequency ML-driven mean reversion on U.S. equities.
 | Holding period | 5 days |
 | Stop-loss | 10% trailing per position (tightened to 5% when regime closes) |
 | Rebalance | Every 5 business days, regime-gated |
-| Regime gate | VIX < 25 AND SPY > 200-day MA AND momentum z < 0.5 |
+| Regime gate | VIX < 25 AND SPY > 200-day MA AND momentum z < 1.5 |
 | Regime close | Losers liquidated immediately, winners held with tightened stop |
 | Validation | 11 walk-forward windows, 4yr train / 1yr val / 1yr test (2010–2025) |
 | Account | $2,000 (Interactive Brokers) |
