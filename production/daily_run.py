@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Daily brief generator. Run daily; auto-runs at Claude session start."""
+"""Daily brief generator: downloads latest prices, scores the universe and writes the trade list."""
 import argparse
 import csv
 import json
